@@ -28,5 +28,9 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+      <activity
+        android:name=".EpubReaderActivity"
+        android:label="EPUB Reader"
+        android:theme="@style/AppTheme" />
     </application>
 </manifest>

@@ -14,6 +14,13 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.bridge.Arguments;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import android.util.Base64;
+
 public class DocumentPickerModule extends ReactContextBaseJavaModule implements ActivityEventListener {
     private static final int PICK_DOCUMENT_REQUEST = 1;
     private Promise mPromise;
@@ -56,33 +63,74 @@ public class DocumentPickerModule extends ReactContextBaseJavaModule implements 
                 } else if (resultCode == Activity.RESULT_OK) {
                     Uri uri = data.getData();
                     if (uri != null) {
-                        WritableMap fileData = Arguments.createMap();
-                        fileData.putString("uri", uri.toString());
-                        
-                        Cursor cursor = activity.getContentResolver().query(uri, null, null, null, null);
-                        if (cursor != null && cursor.moveToFirst()) {
-                            int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                            int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
+                        try {
+                            WritableMap fileData = Arguments.createMap();
                             
-                            String name = cursor.getString(nameIndex);
-                            long size = cursor.getLong(sizeIndex);
+                            Cursor cursor = activity.getContentResolver().query(uri, null, null, null, null);
+                            String name = "document";
+                            long size = 0;
+                            String type = "unknown";
                             
+                            if (cursor != null && cursor.moveToFirst()) {
+                                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                                int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
+                                
+                                name = cursor.getString(nameIndex);
+                                size = cursor.getLong(sizeIndex);
+                                type = activity.getContentResolver().getType(uri);
+                                
+                                cursor.close();
+                            }
+                            
+                            // Copy file to internal storage
+                            File filesDir = activity.getFilesDir();
+                            File destFile = new File(filesDir, name);
+                            
+                            InputStream inputStream = activity.getContentResolver().openInputStream(uri);
+                            OutputStream outputStream = new FileOutputStream(destFile);
+                            
+                            byte[] buffer = new byte[4096];
+                            int length;
+                            while ((length = inputStream.read(buffer)) > 0) {
+                                outputStream.write(buffer, 0, length);
+                            }
+                            
+                            outputStream.flush();
+                            outputStream.close();
+                            inputStream.close();
+                            
+                            // Return file:// URI instead of content://
+                            fileData.putString("uri", "file://" + destFile.getAbsolutePath());
                             fileData.putString("name", name);
                             fileData.putDouble("size", size);
-                            
-                            String type = activity.getContentResolver().getType(uri);
                             fileData.putString("type", type != null ? type : "unknown");
                             
-                            cursor.close();
+                            mPromise.resolve(fileData);
+                        } catch (Exception e) {
+                            mPromise.reject("E_FILE_COPY_ERROR", "Failed to copy file: " + e.getMessage());
                         }
-                        
-                        mPromise.resolve(fileData);
                     } else {
                         mPromise.reject("E_NO_FILE_SELECTED", "No file selected");
                     }
                 }
                 mPromise = null;
             }
+        }
+    }
+
+    @ReactMethod
+    public void readFileAsBase64(String filePath, Promise promise) {
+        try {
+            File file = new File(filePath.replace("file://", ""));
+            FileInputStream inputStream = new FileInputStream(file);
+            byte[] buffer = new byte[(int) file.length()];
+            inputStream.read(buffer);
+            inputStream.close();
+            
+            String base64 = Base64.encodeToString(buffer, Base64.NO_WRAP);
+            promise.resolve(base64);
+        } catch (Exception e) {
+            promise.reject("E_FILE_READ_ERROR", "Failed to read file: " + e.getMessage());
         }
     }
 
