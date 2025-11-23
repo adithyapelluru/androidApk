@@ -8,10 +8,14 @@ import {
   Alert,
   StatusBar,
   NativeModules,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Pdf from 'react-native-pdf';
 
-const { DocumentPicker } = NativeModules;
+const { DocumentPicker, EpubReader } = NativeModules;
+
+
 
 interface FileInfo {
   uri: string;
@@ -22,6 +26,8 @@ interface FileInfo {
 
 function App() {
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null);
+  const [uploadedFiles, setUploadedFiles] = useState<FileInfo[]>([]);
+  const [viewingFile, setViewingFile] = useState<FileInfo | null>(null);
 
   const pickDocument = async () => {
     try {
@@ -43,8 +49,28 @@ function App() {
       Alert.alert('No File', 'Please select a file first');
       return;
     }
-    // Here you would implement your upload logic
-    Alert.alert('Upload', `Ready to upload: ${selectedFile.name}`);
+    // Store file locally for offline access
+    setUploadedFiles([...uploadedFiles, selectedFile]);
+    Alert.alert('Success', `File uploaded: ${selectedFile.name}`);
+    setSelectedFile(null);
+  };
+
+  const viewFile = async (file: FileInfo) => {
+    if (file.type === 'application/pdf') {
+      setViewingFile(file);
+    } else {
+      // Open EPUB with native reader
+      try {
+        await EpubReader.openEpub(file.uri);
+      } catch (error) {
+        console.error('Error opening EPUB:', error);
+        Alert.alert('Error', 'Failed to open EPUB file');
+      }
+    }
+  };
+
+  const closeViewer = () => {
+    setViewingFile(null);
   };
 
   return (
@@ -76,6 +102,11 @@ function App() {
               <Text style={styles.fileDetails}>
                 Type: {selectedFile.type === 'application/pdf' ? 'PDF' : 'EPUB'}
               </Text>
+              <TouchableOpacity
+                style={styles.viewButton}
+                onPress={() => viewFile(selectedFile)}>
+                <Text style={styles.viewButtonText}>👁️ View File</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -89,8 +120,61 @@ function App() {
             disabled={!selectedFile}>
             <Text style={styles.buttonText}>⬆️ Upload File</Text>
           </TouchableOpacity>
+
+          {uploadedFiles.length > 0 && (
+            <View style={styles.uploadedSection}>
+              <Text style={styles.uploadedTitle}>Uploaded Files:</Text>
+              {uploadedFiles.map((file, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.uploadedFileItem}
+                  onPress={() => viewFile(file)}>
+                  <Text style={styles.uploadedFileIcon}>
+                    {file.type === 'application/pdf' ? '📄' : '📚'}
+                  </Text>
+                  <View style={styles.uploadedFileInfo}>
+                    <Text style={styles.uploadedFileName}>{file.name}</Text>
+                    <Text style={styles.uploadedFileSize}>
+                      {(file.size / 1024).toFixed(2)} KB
+                    </Text>
+                  </View>
+                  <Text style={styles.viewIcon}>👁️</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
       </ScrollView>
+
+      {/* PDF/EPUB Viewer Modal */}
+      <Modal
+        visible={viewingFile !== null}
+        animationType="slide"
+        onRequestClose={closeViewer}>
+        <SafeAreaView style={styles.viewerContainer}>
+          <View style={styles.viewerHeader}>
+            <Text style={styles.viewerTitle} numberOfLines={1}>
+              {viewingFile?.name}
+            </Text>
+            <TouchableOpacity onPress={closeViewer} style={styles.closeButton}>
+              <Text style={styles.closeButtonText}>✕ Close</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Pdf
+            source={{ uri: viewingFile?.uri || '' }}
+            style={styles.pdfViewer}
+            trustAllCerts={false}
+            onLoadComplete={(numberOfPages) => {
+              console.log(`PDF loaded with ${numberOfPages} pages`);
+            }}
+            onError={(error) => {
+              console.error('PDF Error:', error);
+              Alert.alert('Error', 'Failed to load PDF');
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -183,6 +267,96 @@ const styles = StyleSheet.create({
   },
   fileIconText: {
     fontSize: 64,
+  },
+  uploadedSection: {
+    marginTop: 20,
+  },
+  uploadedTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  uploadedFileItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+  },
+  uploadedFileIcon: {
+    fontSize: 32,
+    marginRight: 12,
+  },
+  uploadedFileInfo: {
+    flex: 1,
+  },
+  uploadedFileName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+    marginBottom: 4,
+  },
+  uploadedFileSize: {
+    fontSize: 14,
+    color: '#666',
+  },
+  viewIcon: {
+    fontSize: 24,
+    marginLeft: 8,
+  },
+  viewerContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  viewerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#007AFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+  },
+  viewerTitle: {
+    flex: 1,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#fff',
+    marginRight: 12,
+  },
+  closeButton: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  closeButtonText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  pdfViewer: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  viewButton: {
+    backgroundColor: '#FF9500',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  viewButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 
