@@ -12,6 +12,7 @@
   "dependencies": {
     "@epubjs-react-native/core": "^1.4.7",
     "@epubjs-react-native/file-system": "^1.1.4",
+    "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/hooks": "^100.1.0",
     "@react-native/new-app-screen": "0.82.1",
     "crypto-js": "^4.2.0",

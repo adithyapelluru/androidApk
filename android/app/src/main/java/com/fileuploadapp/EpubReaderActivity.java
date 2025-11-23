@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
+import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.view.Gravity;
@@ -14,6 +15,7 @@ import android.graphics.drawable.ShapeDrawable;
 import android.graphics.drawable.shapes.PathShape;
 import android.graphics.Path;
 import android.graphics.Paint;
+import android.content.SharedPreferences;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -25,6 +27,8 @@ import java.util.zip.ZipInputStream;
 
 public class EpubReaderActivity extends Activity {
     private WebView webView;
+    private String epubPath;
+    private SharedPreferences prefs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -78,9 +82,53 @@ public class EpubReaderActivity extends Activity {
         
         setContentView(container);
         
+        // Initialize SharedPreferences for saving reading position
+        prefs = getSharedPreferences("EpubReaderPrefs", MODE_PRIVATE);
+        
         // Load EPUB
-        String epubPath = getIntent().getStringExtra("epub_path");
+        epubPath = getIntent().getStringExtra("epub_path");
         loadEpub(epubPath);
+    }
+    
+    @Override
+    protected void onPause() {
+        super.onPause();
+        saveScrollPosition();
+    }
+    
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        saveScrollPosition();
+    }
+    
+    private void saveScrollPosition() {
+        if (webView != null && epubPath != null) {
+            int scrollY = webView.getScrollY();
+            prefs.edit().putInt(getBookKey(), scrollY).apply();
+        }
+    }
+    
+    private void restoreScrollPosition() {
+        if (webView != null && epubPath != null) {
+            int scrollY = prefs.getInt(getBookKey(), 0);
+            if (scrollY > 0) {
+                // Hide webview initially to prevent flash
+                webView.setAlpha(0f);
+                
+                // Scroll immediately and show after
+                webView.post(() -> {
+                    webView.scrollTo(0, scrollY);
+                    // Fade in smoothly
+                    webView.animate().alpha(1f).setDuration(150).start();
+                });
+            }
+        }
+    }
+    
+    private String getBookKey() {
+        // Use file path as unique key for this book
+        return "scroll_" + epubPath.hashCode();
     }
     
     private int dpToPx(int dp) {
@@ -187,6 +235,15 @@ public class EpubReaderActivity extends Activity {
             "a { color: #007AFF; text-decoration: none; }" +
             "</style>" +
             "</head><body>" + allContent.toString() + "</body></html>";
+        
+        // Set WebViewClient to restore scroll position after content loads
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                restoreScrollPosition();
+            }
+        });
         
         webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
     }
