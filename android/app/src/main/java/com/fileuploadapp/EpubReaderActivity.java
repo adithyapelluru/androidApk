@@ -5,8 +5,10 @@ import android.os.Bundle;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
+import android.webkit.ValueCallback;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.LinearLayout;
 import android.view.Gravity;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -16,6 +18,9 @@ import android.graphics.drawable.shapes.PathShape;
 import android.graphics.Path;
 import android.graphics.Paint;
 import android.content.SharedPreferences;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import java.util.Locale;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -25,10 +30,13 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-public class EpubReaderActivity extends Activity {
+public class EpubReaderActivity extends Activity implements TextToSpeech.OnInitListener {
     private WebView webView;
     private String epubPath;
     private SharedPreferences prefs;
+    private TextToSpeech tts;
+    private ImageButton playButton;
+    private boolean isSpeaking = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,14 +88,187 @@ public class EpubReaderActivity extends Activity {
         
         container.addView(backButton);
         
+        // Create TTS controls at bottom
+        LinearLayout ttsControls = new LinearLayout(this);
+        FrameLayout.LayoutParams ttsParams = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            dpToPx(80)
+        );
+        ttsParams.gravity = Gravity.BOTTOM;
+        ttsControls.setLayoutParams(ttsParams);
+        ttsControls.setOrientation(LinearLayout.HORIZONTAL);
+        ttsControls.setGravity(Gravity.CENTER);
+        ttsControls.setBackgroundColor(Color.WHITE);
+        ttsControls.setElevation(dpToPx(8));
+        ttsControls.setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(16));
+        
+        // Play/Pause button
+        playButton = new ImageButton(this);
+        int playSize = dpToPx(56);
+        LinearLayout.LayoutParams playParams = new LinearLayout.LayoutParams(playSize, playSize);
+        playButton.setLayoutParams(playParams);
+        
+        GradientDrawable playShape = new GradientDrawable();
+        playShape.setShape(GradientDrawable.OVAL);
+        playShape.setColor(Color.parseColor("#007AFF"));
+        playButton.setBackground(playShape);
+        playButton.setElevation(dpToPx(4));
+        playButton.setScaleType(ImageButton.ScaleType.CENTER_INSIDE);
+        playButton.setPadding(dpToPx(14), dpToPx(14), dpToPx(14), dpToPx(14));
+        playButton.setImageDrawable(createPlayDrawable());
+        
+        playButton.setOnClickListener(v -> toggleSpeech());
+        
+        ttsControls.addView(playButton);
+        container.addView(ttsControls);
+        
         setContentView(container);
         
         // Initialize SharedPreferences for saving reading position
         prefs = getSharedPreferences("EpubReaderPrefs", MODE_PRIVATE);
         
+        // Initialize TTS
+        tts = new TextToSpeech(this, this);
+        
         // Load EPUB
         epubPath = getIntent().getStringExtra("epub_path");
         loadEpub(epubPath);
+    }
+    
+    @Override
+    public void onInit(int status) {
+        if (status == TextToSpeech.SUCCESS) {
+            int result = tts.setLanguage(Locale.US);
+            tts.setSpeechRate(0.8f);
+            
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                android.util.Log.e("TTS", "Language not supported");
+            }
+            
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override
+                public void onStart(String utteranceId) {
+                    runOnUiThread(() -> {
+                        isSpeaking = true;
+                        updatePlayButton();
+                    });
+                }
+                
+                @Override
+                public void onDone(String utteranceId) {
+                    runOnUiThread(() -> {
+                        isSpeaking = false;
+                        updatePlayButton();
+                    });
+                }
+                
+                @Override
+                public void onError(String utteranceId) {
+                    runOnUiThread(() -> {
+                        isSpeaking = false;
+                        updatePlayButton();
+                    });
+                }
+            });
+        }
+    }
+    
+    private void toggleSpeech() {
+        if (isSpeaking) {
+            tts.stop();
+            isSpeaking = false;
+            updatePlayButton();
+        } else {
+            extractAndSpeak();
+        }
+    }
+    
+    private void extractAndSpeak() {
+        // Extract text from current viewport and below (not the entire book)
+        webView.evaluateJavascript(
+            "(function() { " +
+            "  var scrollY = window.scrollY || window.pageYOffset; " +
+            "  var viewportHeight = window.innerHeight; " +
+            "  var elements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6'); " +
+            "  var text = ''; " +
+            "  for (var i = 0; i < elements.length; i++) { " +
+            "    var rect = elements[i].getBoundingClientRect(); " +
+            "    var elementTop = rect.top + scrollY; " +
+            "    if (elementTop >= scrollY - viewportHeight) { " +
+            "      text += elements[i].innerText + ' '; " +
+            "    } " +
+            "  } " +
+            "  return text; " +
+            "})();",
+            new ValueCallback<String>() {
+                @Override
+                public void onReceiveValue(String text) {
+                    if (text != null && !text.equals("null")) {
+                        // Remove quotes and clean up
+                        text = text.replace("\\n", " ").replace("\\\"", "\"");
+                        if (text.startsWith("\"")) text = text.substring(1);
+                        if (text.endsWith("\"")) text = text.substring(0, text.length() - 1);
+                        
+                        // Split text into chunks (TTS has a 4000 char limit)
+                        int maxLength = 3000;
+                        if (text.length() <= maxLength) {
+                            android.os.Bundle params = new android.os.Bundle();
+                            params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "epub_tts_0");
+                            tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "epub_tts_0");
+                        } else {
+                            // Split into sentences and group them
+                            int start = 0;
+                            int chunkIndex = 0;
+                            
+                            while (start < text.length()) {
+                                int end = Math.min(start + maxLength, text.length());
+                                
+                                // Try to break at sentence end
+                                if (end < text.length()) {
+                                    int lastPeriod = text.lastIndexOf(". ", end);
+                                    int lastQuestion = text.lastIndexOf("? ", end);
+                                    int lastExclaim = text.lastIndexOf("! ", end);
+                                    int breakPoint = Math.max(lastPeriod, Math.max(lastQuestion, lastExclaim));
+                                    
+                                    if (breakPoint > start) {
+                                        end = breakPoint + 2;
+                                    }
+                                }
+                                
+                                String chunk = text.substring(start, end);
+                                android.os.Bundle params = new android.os.Bundle();
+                                params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "epub_tts_" + chunkIndex);
+                                
+                                if (chunkIndex == 0) {
+                                    tts.speak(chunk, TextToSpeech.QUEUE_FLUSH, params, "epub_tts_" + chunkIndex);
+                                } else {
+                                    tts.speak(chunk, TextToSpeech.QUEUE_ADD, params, "epub_tts_" + chunkIndex);
+                                }
+                                
+                                start = end;
+                                chunkIndex++;
+                            }
+                        }
+                    }
+                }
+            }
+        );
+    }
+    
+    private void updatePlayButton() {
+        if (isSpeaking) {
+            playButton.setImageDrawable(createPauseDrawable());
+            GradientDrawable shape = new GradientDrawable();
+            shape.setShape(GradientDrawable.OVAL);
+            shape.setColor(Color.parseColor("#FF3B30"));
+            playButton.setBackground(shape);
+        } else {
+            playButton.setImageDrawable(createPlayDrawable());
+            GradientDrawable shape = new GradientDrawable();
+            shape.setShape(GradientDrawable.OVAL);
+            shape.setColor(Color.parseColor("#007AFF"));
+            playButton.setBackground(shape);
+        }
     }
     
     @Override
@@ -100,6 +281,10 @@ public class EpubReaderActivity extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         saveScrollPosition();
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
     }
     
     private void saveScrollPosition() {
@@ -152,6 +337,40 @@ public class EpubReaderActivity extends Activity {
         drawable.getPaint().setStrokeWidth(3);
         drawable.getPaint().setStrokeCap(Paint.Cap.ROUND);
         drawable.getPaint().setStrokeJoin(Paint.Join.ROUND);
+        drawable.setIntrinsicWidth(dpToPx(24));
+        drawable.setIntrinsicHeight(dpToPx(24));
+        
+        return drawable;
+    }
+    
+    private ShapeDrawable createPlayDrawable() {
+        // Create a play triangle
+        Path path = new Path();
+        path.moveTo(8, 4);
+        path.lineTo(8, 20);
+        path.lineTo(20, 12);
+        path.close();
+        
+        PathShape pathShape = new PathShape(path, 24, 24);
+        ShapeDrawable drawable = new ShapeDrawable(pathShape);
+        drawable.getPaint().setColor(Color.WHITE);
+        drawable.getPaint().setStyle(Paint.Style.FILL);
+        drawable.setIntrinsicWidth(dpToPx(24));
+        drawable.setIntrinsicHeight(dpToPx(24));
+        
+        return drawable;
+    }
+    
+    private ShapeDrawable createPauseDrawable() {
+        // Create pause bars
+        Path path = new Path();
+        path.addRect(6, 4, 10, 20, Path.Direction.CW);
+        path.addRect(14, 4, 18, 20, Path.Direction.CW);
+        
+        PathShape pathShape = new PathShape(path, 24, 24);
+        ShapeDrawable drawable = new ShapeDrawable(pathShape);
+        drawable.getPaint().setColor(Color.WHITE);
+        drawable.getPaint().setStyle(Paint.Style.FILL);
         drawable.setIntrinsicWidth(dpToPx(24));
         drawable.setIntrinsicHeight(dpToPx(24));
         

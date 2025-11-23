@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Pdf from 'react-native-pdf';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RNFS from 'react-native-fs';
+import EpubReaderWithTTS from './components/EpubReaderWithTTS';
 
 const { DocumentPicker, EpubReader } = NativeModules;
 
@@ -30,6 +31,7 @@ function App() {
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<FileInfo[]>([]);
   const [viewingFile, setViewingFile] = useState<FileInfo | null>(null);
+  const [viewingEpub, setViewingEpub] = useState<FileInfo | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const pageChangeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -233,7 +235,7 @@ function App() {
       setCurrentPage(savedPage);
       setViewingFile(file);
     } else {
-      // Open EPUB with native reader
+      // Open EPUB with native reader (now has TTS!)
       try {
         await EpubReader.openEpub(file.uri);
       } catch (error) {
@@ -410,7 +412,7 @@ function App() {
         </View>
       </ScrollView>
 
-      {/* PDF/EPUB Viewer Modal */}
+      {/* PDF Viewer Modal */}
       <Modal
         visible={viewingFile !== null}
         animationType="slide"
@@ -442,6 +444,19 @@ function App() {
             }}
           />
         </SafeAreaView>
+      </Modal>
+
+      {/* EPUB Viewer with TTS Modal */}
+      <Modal
+        visible={viewingEpub !== null}
+        animationType="slide"
+        onRequestClose={() => setViewingEpub(null)}>
+        {viewingEpub && (
+          <EpubReaderWithTTS
+            epubPath={viewingEpub.uri}
+            onClose={() => setViewingEpub(null)}
+          />
+        )}
       </Modal>
     </SafeAreaView>
   );
